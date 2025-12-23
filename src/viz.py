@@ -1,8 +1,7 @@
 import math
-import pydeck as pdk
 import numpy as np
 import pandas as pd
-
+import pydeck as pdk
 
 from .geo import (
     xy_to_ll,
@@ -24,6 +23,12 @@ def build_deck(ctx, geom, PI_xy, out):
     SL1_xy, SL2_xy, M1_xy = geom["SL1_xy"], geom["SL2_xy"], geom["M1_xy"]
     poly_BDY, poly_buffer = geom["poly_BDY"], geom["poly_buffer"]
 
+    # ---- Map orientation: wind comes from top ----
+    # If TWD=0 => bearing=0 (no change)
+    # If TWD=270 => bearing=90 (clockwise)
+    TWD = float(out.get("TWD", 0.0))
+    bearing = (360.0 - TWD) % 360.0
+
     # Polygons (white)
     poly_BDY_path_ll = polygon_exterior_to_lonlat_path(poly_BDY, to_wgs)
 
@@ -37,7 +42,7 @@ def build_deck(ctx, geom, PI_xy, out):
 
     # Laylines (orange dashed)
     lay_dashes = []
-    for lay in [out["lay_vis_SL1"], out["lay_vis_SL2"]]:
+    for lay in [out.get("lay_vis_SL1"), out.get("lay_vis_SL2")]:
         if lay is None:
             continue
         dashes_xy = dashed_paths_from_linestring_xy(lay, dash_m=40.0, gap_m=30.0)
@@ -45,11 +50,11 @@ def build_deck(ctx, geom, PI_xy, out):
             lay_dashes.append({"path": xy_path_to_lonlat_path(seg_xy, to_wgs)})
 
     # First legs red
-    first_leg_paths = out["first_leg_paths"]
+    first_leg_paths = out.get("first_leg_paths", [])
 
-    # Second legs colored: create per-segment layers (robust for pydeck versions)
+    # Second legs colored: per-segment layer (robust)
     second_leg_layers = []
-    for seg in out["traj_second_segments"]:
+    for seg in out.get("traj_second_segments", []):
         second_leg_layers.append(
             pdk.Layer(
                 "PathLayer",
@@ -61,25 +66,13 @@ def build_deck(ctx, geom, PI_xy, out):
             )
         )
 
-    # Wind vector (blue) reversed direction, length=0.5*startline
+    # Wind vector (blue), reversed direction, length = 0.5*|SL1-SL2|
     startline_len_m = float(np.linalg.norm(SL2_xy - SL1_xy))
     wind_len_m = 0.5 * startline_len_m
     mid_sl_xy = (SL1_xy + SL2_xy) / 2.0
     anchor_xy = (M1_xy + mid_sl_xy) / 2.0
 
-    wind_dir = -heading_to_unit_vector(float(out["ANG_port"] - float(out["ANG_port"]) + 0.0))  # placeholder
-    # Actually wind direction should be based on TWD; we receive it via out? Not stored -> derive from ANG_port not possible.
-    # So we reconstruct from UI: simplest: store TWD in out later if you want.
-    # For now, keep wind from TWD by reading it from ctx is not possible -> require param injection.
-    # We'll instead compute wind arrow in app and pass; but to keep modules clean, add TWD to out in model.
-    # In case missing, default to north.
-    # (This keeps the app running even if you forgot to update model.)
-    wind_dir = np.array([0.0, 1.0], dtype=float)
-
-    # Better: if out contains "TWD", use it
-    if "TWD" in out:
-        wind_dir = -heading_to_unit_vector(float(out["TWD"]))
-
+    wind_dir = -heading_to_unit_vector(TWD)  # reversed direction as previously requested
     wind_end_xy = anchor_xy + wind_dir * wind_len_m
     anchor_ll = xy_to_ll(to_wgs, anchor_xy[0], anchor_xy[1])
     wind_end_ll = xy_to_ll(to_wgs, wind_end_xy[0], wind_end_xy[1])
@@ -111,11 +104,13 @@ def build_deck(ctx, geom, PI_xy, out):
         {"name": "PI",  "lat": PI_ll[0],  "lon": PI_ll[1],  "kind": "calc"},
     ]
 
-    if out["M_buffer_BDY_xy"] is not None:
-        lat, lon = xy_to_ll(to_wgs, out["M_buffer_BDY_xy"][0], out["M_buffer_BDY_xy"][1])
+    if out.get("M_buffer_BDY_xy") is not None:
+        p = out["M_buffer_BDY_xy"]
+        lat, lon = xy_to_ll(to_wgs, p[0], p[1])
         points.append({"name": "M_buffer_BDY", "lat": lat, "lon": lon, "kind": "calc"})
-    if out["M_LL_SL1_xy"] is not None:
-        lat, lon = xy_to_ll(to_wgs, out["M_LL_SL1_xy"][0], out["M_LL_SL1_xy"][1])
+    if out.get("M_LL_SL1_xy") is not None:
+        p = out["M_LL_SL1_xy"]
+        lat, lon = xy_to_ll(to_wgs, p[0], p[1])
         points.append({"name": "M_LL_SL1", "lat": lat, "lon": lon, "kind": "calc"})
 
     # Labels offset (white)
@@ -127,6 +122,7 @@ def build_deck(ctx, geom, PI_xy, out):
 
     layers = []
 
+    # poly_BDY (white)
     layers.append(
         pdk.Layer(
             "PathLayer",
@@ -138,6 +134,7 @@ def build_deck(ctx, geom, PI_xy, out):
         )
     )
 
+    # poly_buffer dashed (white)
     if buffer_dash_data:
         layers.append(
             pdk.Layer(
@@ -150,6 +147,7 @@ def build_deck(ctx, geom, PI_xy, out):
             )
         )
 
+    # Start line (pink)
     layers.append(
         pdk.Layer(
             "PathLayer",
@@ -161,6 +159,7 @@ def build_deck(ctx, geom, PI_xy, out):
         )
     )
 
+    # Laylines (orange dashed)
     if lay_dashes:
         layers.append(
             pdk.Layer(
@@ -173,6 +172,7 @@ def build_deck(ctx, geom, PI_xy, out):
             )
         )
 
+    # First legs (red)
     if first_leg_paths:
         layers.append(
             pdk.Layer(
@@ -185,8 +185,10 @@ def build_deck(ctx, geom, PI_xy, out):
             )
         )
 
+    # Second legs (colored)
     layers.extend(second_leg_layers)
 
+    # Wind (blue)
     layers.append(
         pdk.Layer(
             "PathLayer",
@@ -200,7 +202,7 @@ def build_deck(ctx, geom, PI_xy, out):
     layers.append(
         pdk.Layer(
             "TextLayer",
-            data=[{"text": f"TWD {float(out.get('TWD', 0)):.0f}°", "lat": anchor_ll[0], "lon": anchor_ll[1]}],
+            data=[{"text": f"TWD {TWD:.0f}°", "lat": anchor_ll[0], "lon": anchor_ll[1]}],
             get_position="[lon, lat]",
             get_text="text",
             get_size=12,
@@ -209,6 +211,7 @@ def build_deck(ctx, geom, PI_xy, out):
         )
     )
 
+    # Points (marks yellow)
     layers.append(
         pdk.Layer(
             "ScatterplotLayer",
@@ -222,6 +225,7 @@ def build_deck(ctx, geom, PI_xy, out):
         )
     )
 
+    # Labels (white)
     layers.append(
         pdk.Layer(
             "TextLayer",
@@ -234,5 +238,12 @@ def build_deck(ctx, geom, PI_xy, out):
         )
     )
 
-    view_state = pdk.ViewState(latitude=centroid_lat, longitude=centroid_lon, zoom=14, pitch=0)
+    view_state = pdk.ViewState(
+        latitude=centroid_lat,
+        longitude=centroid_lon,
+        zoom=14,
+        pitch=0,
+        bearing=bearing,
+    )
+
     return pdk.Deck(layers=layers, initial_view_state=view_state, tooltip={"text": "{name}"})
