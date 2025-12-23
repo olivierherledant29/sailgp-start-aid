@@ -27,7 +27,8 @@ def build_deck(ctx, geom, PI_xy, out):
     # If TWD=0 => bearing=0 (no change)
     # If TWD=270 => bearing=90 (clockwise)
     TWD = float(out.get("TWD", 0.0))
-    bearing = (360.0 - TWD) % 360.0
+    bearing = (TWD % 360.0)
+
 
     # Polygons (white)
     poly_BDY_path_ll = polygon_exterior_to_lonlat_path(poly_BDY, to_wgs)
