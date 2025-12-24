@@ -23,12 +23,9 @@ def build_deck(ctx, geom, PI_xy, out):
     SL1_xy, SL2_xy, M1_xy = geom["SL1_xy"], geom["SL2_xy"], geom["M1_xy"]
     poly_BDY, poly_buffer = geom["poly_BDY"], geom["poly_buffer"]
 
-    # ---- Map orientation: wind comes from top ----
-    # If TWD=0 => bearing=0 (no change)
-    # If TWD=270 => bearing=90 (clockwise)
+    # Map orientation (validated): bearing follows TWD
     TWD = float(out.get("TWD", 0.0))
     bearing = (TWD % 360.0)
-
 
     # Polygons (white)
     poly_BDY_path_ll = polygon_exterior_to_lonlat_path(poly_BDY, to_wgs)
@@ -53,7 +50,7 @@ def build_deck(ctx, geom, PI_xy, out):
     # First legs red
     first_leg_paths = out.get("first_leg_paths", [])
 
-    # Second legs colored: per-segment layer (robust)
+    # Second legs colored (per-segment layer)
     second_leg_layers = []
     for seg in out.get("traj_second_segments", []):
         second_leg_layers.append(
@@ -73,12 +70,11 @@ def build_deck(ctx, geom, PI_xy, out):
     mid_sl_xy = (SL1_xy + SL2_xy) / 2.0
     anchor_xy = (M1_xy + mid_sl_xy) / 2.0
 
-    wind_dir = -heading_to_unit_vector(TWD)  # reversed direction as previously requested
+    wind_dir = -heading_to_unit_vector(TWD)
     wind_end_xy = anchor_xy + wind_dir * wind_len_m
     anchor_ll = xy_to_ll(to_wgs, anchor_xy[0], anchor_xy[1])
     wind_end_ll = xy_to_ll(to_wgs, wind_end_xy[0], wind_end_xy[1])
 
-    # Arrowhead
     arrow_head_len = max(10.0, 0.08 * wind_len_m)
     arrow_ang = math.radians(25.0)
     u = wind_dir / (np.linalg.norm(wind_dir) + 1e-12)
@@ -114,6 +110,13 @@ def build_deck(ctx, geom, PI_xy, out):
         lat, lon = xy_to_ll(to_wgs, p[0], p[1])
         points.append({"name": "M_LL_SL1", "lat": lat, "lon": lon, "kind": "calc"})
 
+    # New endpoints on start line
+    for key, label in [("SL1_7m_xy", "SL1_7m"), ("SL2_7m_xy", "SL2_7m"), ("SP_xy", "SP")]:
+        if out.get(key) is not None:
+            p = out[key]
+            lat, lon = xy_to_ll(to_wgs, p[0], p[1])
+            points.append({"name": label, "lat": lat, "lon": lon, "kind": "calc"})
+
     # Labels offset (white)
     label_e, label_n = 10.0, -14.0
     labels = []
@@ -123,7 +126,6 @@ def build_deck(ctx, geom, PI_xy, out):
 
     layers = []
 
-    # poly_BDY (white)
     layers.append(
         pdk.Layer(
             "PathLayer",
@@ -135,7 +137,6 @@ def build_deck(ctx, geom, PI_xy, out):
         )
     )
 
-    # poly_buffer dashed (white)
     if buffer_dash_data:
         layers.append(
             pdk.Layer(
@@ -148,7 +149,6 @@ def build_deck(ctx, geom, PI_xy, out):
             )
         )
 
-    # Start line (pink)
     layers.append(
         pdk.Layer(
             "PathLayer",
@@ -160,7 +160,6 @@ def build_deck(ctx, geom, PI_xy, out):
         )
     )
 
-    # Laylines (orange dashed)
     if lay_dashes:
         layers.append(
             pdk.Layer(
@@ -173,7 +172,6 @@ def build_deck(ctx, geom, PI_xy, out):
             )
         )
 
-    # First legs (red)
     if first_leg_paths:
         layers.append(
             pdk.Layer(
@@ -186,10 +184,8 @@ def build_deck(ctx, geom, PI_xy, out):
             )
         )
 
-    # Second legs (colored)
     layers.extend(second_leg_layers)
 
-    # Wind (blue)
     layers.append(
         pdk.Layer(
             "PathLayer",
@@ -212,7 +208,6 @@ def build_deck(ctx, geom, PI_xy, out):
         )
     )
 
-    # Points (marks yellow)
     layers.append(
         pdk.Layer(
             "ScatterplotLayer",
@@ -226,7 +221,6 @@ def build_deck(ctx, geom, PI_xy, out):
         )
     )
 
-    # Labels (white)
     layers.append(
         pdk.Layer(
             "TextLayer",
